@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Image Save Test</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 16px; background: #fff; color: #111; }
+    h1 { font-size: 20px; margin-bottom: 4px; }
+    h2 { font-size: 16px; margin-top: 24px; }
+    .muted { color: #666; font-size: 13px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
+    input, textarea, button, select { padding: 8px; font-size: 14px; }
+    input, textarea { width: 100%; box-sizing: border-box; }
+    img { max-width: 100%; display: block; margin-top: 8px; border: 1px solid #ddd; }
+    img:not([src]) { display: none; }
+    textarea { min-height: 200px; display: none; margin-top: 8px; }
+    pre { background: #111; color: #ddd; padding: 12px; border-radius: 8px; overflow: auto; white-space: pre-wrap; font-size: 12px; }
+  </style>
+</head>
+<body>
+<h1>이미지 저장 방식 실험</h1>
+<p class="muted">LINE 안에서 이미지를 사진 앨범에 저장할 수 있는 방식을 찾는 실험입니다.</p>
+<ol class="muted">
+  <li>이 페이지 주소를 LINE 「나와의 채팅」에 보내고, 링크를 탭해 LINE 안에서 엽니다.</li>
+  <li>항목마다 버튼을 누르고, 사진 앨범에 실제로 저장됐는지 확인해 O / X 를 고릅니다. 눌러도 아무 일이 없으면 X 입니다.</li>
+  <li>맨 아래 「결과 복사」로 환경과 결과를 복사해 공유합니다.</li>
+</ol>
+<p class="muted">환경: <strong id="env"></strong><br /><code id="ua"></code></p>
+
+<h2>1. https 주소의 이미지</h2>
+<p class="muted">기본값은 이 페이지와 같은 서버의 <code>sample.png</code> 입니다. 다른 주소를 넣으면 그 이미지로 시험합니다.
+  URL 이 이 페이지와 다른 origin 이면 브라우저가 <code>download</code> 속성을 무시할 수 있습니다.</p>
+<input id="httpsUrl" />
+<div id="httpsRows"></div>
+<img id="httpsImg" alt="https 이미지" />
+
+<h2>2. 페이지 안에서 만든 이미지 (blob)</h2>
+<p class="muted">서버에서 헤더를 실어 <code>fetch</code> 로 받은 이미지는 페이지 안에서 blob 이 됩니다. 여기서는 같은 방식으로 <code>sample.png</code> 를 받아 blob 을 만듭니다.
+  받기에 실패하면 페이지가 직접 그린 PNG 를 씁니다.</p>
+<p class="muted">지금 쓰는 이미지: <strong id="blobSource">-</strong></p>
+<div id="blobRows"></div>
+<img id="blobImg" alt="blob 이미지" />
+
+<h2>결과</h2>
+<button id="copyBtn">결과 복사</button>
+<textarea id="summary" readonly></textarea>
+<pre id="log"></pre>
+
+<script>
+  (() => {
+    const TESTS = [
+      { id: "A1", group: "https", label: "<a download> 로 받기" },
+      { id: "A2", group: "https", label: "새 창으로 연 뒤 저장" },
+      { id: "B", group: "https", label: "아래 이미지를 길게 눌러 저장", manual: true },
+      { id: "C1", group: "blob", label: "blob URL + <a download>" },
+      { id: "C2", group: "blob", label: "blob URL 을 새 창으로 연 뒤 저장" },
+      { id: "C3", group: "blob", label: "아래 이미지를 길게 눌러 저장", manual: true },
+      { id: "D", group: "blob", label: "공유 시트(navigator.share)에서 「이미지 저장」" },
+      { id: "E", group: "blob", label: "data URL + <a download>" },
+    ];
+    const ua = navigator.userAgent;
+    const os = /iPhone|iPad|iPod/.test(ua) ? "iOS" : /Android/.test(ua) ? "Android" : "기타 OS";
+    const browser = /LIFF/.test(ua) ? "LIFF" : /\sLine\//.test(ua) ? "LINE 인앱 브라우저" : "일반 브라우저";
+    const sampleUrl = new URL("sample.png", location.href).href;
+
+    const logEl = document.getElementById("log");
+    const httpsUrlEl = document.getElementById("httpsUrl");
+    const httpsImgEl = document.getElementById("httpsImg");
+    const blobImgEl = document.getElementById("blobImg");
+    const blobSourceEl = document.getElementById("blobSource");
+    const summaryEl = document.getElementById("summary");
+    const blobImage = { blob: null, url: null, dataUrl: null, source: "-" };
+
+    document.getElementById("env").textContent = `${os} · ${browser}`;
+    document.getElementById("ua").textContent = ua;
+    log(`secure context = ${window.isSecureContext}, navigator.share = ${typeof navigator.share}, navigator.canShare = ${typeof navigator.canShare}`);
+
+    function log(message) {
+      logEl.textContent = `[${new Date().toLocaleTimeString()}] ${message}\n` + logEl.textContent;
+    }
+
+    async function runTest(test, handler) {
+      log(`${test.id} 실행`);
+      try {
+        await handler();
+      } catch (e) {
+        log(`${test.id} 오류: ${e.name}: ${e.message}`);
+      }
+    }
+
+    function clickAnchor(href, download, newWindow) {
+      const a = document.createElement("a");
+      a.href = href;
+      if (download) a.download = download;
+      if (newWindow) {
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+      }
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+
+    function requireHttpsUrl() {
+      const url = httpsUrlEl.value.trim();
+      if (!url.startsWith("https://")) throw new Error("https 이미지 URL 을 먼저 넣어 주세요.");
+      return url;
+    }
+
+    function requireBlob() {
+      if (!blobImage.blob) throw new Error("blob 이미지가 아직 없습니다.");
+      return blobImage;
+    }
+
+    function fileNameOf(type) {
+      const extension = { "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" }[type] || "png";
+      return `save-test.${extension}`;
+    }
+
+    const handlers = {
+      A1: () => clickAnchor(requireHttpsUrl(), fileNameOf(), false),
+      A2: () => clickAnchor(requireHttpsUrl(), null, true),
+      C1: () => clickAnchor(requireBlob().url, fileNameOf(blobImage.blob.type), false),
+      C2: () => clickAnchor(requireBlob().url, null, true),
+      E: () => clickAnchor(requireBlob().dataUrl, fileNameOf(blobImage.blob.type), false),
+      D: async () => {
+        const { blob } = requireBlob();
+        if (!navigator.share) throw new Error("navigator.share 미지원");
+        const file = new File([blob], fileNameOf(blob.type), { type: blob.type || "image/png" });
+        log(`D canShare(files) = ${navigator.canShare ? navigator.canShare({ files: [file] }) : "canShare 미지원"}`);
+        await navigator.share({ files: [file] });
+        log("D 공유 시트가 정상 종료됨");
+      },
+    };
+
+    for (const test of TESTS) {
+      const row = document.createElement("div");
+      row.className = "row";
+      if (test.manual) {
+        const text = document.createElement("span");
+        text.textContent = `${test.id}. ${test.label}`;
+        row.appendChild(text);
+      } else {
+        const button = document.createElement("button");
+        button.textContent = `${test.id}. ${test.label}`;
+        button.onclick = () => runTest(test, handlers[test.id]);
+        row.appendChild(button);
+      }
+      const select = document.createElement("select");
+      select.id = `result${test.id}`;
+      for (const [value, text] of [["", "결과 선택"], ["O", "O 저장됨"], ["X", "X 안 됨"]]) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = text;
+        select.appendChild(option);
+      }
+      row.appendChild(select);
+      document.getElementById(test.group === "https" ? "httpsRows" : "blobRows").appendChild(row);
+    }
+
+    function readDataUrl(blob) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    async function setBlobImage(blob, source) {
+      const dataUrl = await readDataUrl(blob);
+      if (blobImage.url) URL.revokeObjectURL(blobImage.url);
+      Object.assign(blobImage, { blob, url: URL.createObjectURL(blob), dataUrl, source });
+      blobImgEl.src = blobImage.url;
+      blobSourceEl.textContent = source;
+      log(`blob 이미지: ${source} (${blob.type || "type 없음"}, ${blob.size} bytes)`);
+    }
+
+    function drawTestPng() {
+      const canvas = document.createElement("canvas");
+      canvas.width = 600;
+      canvas.height = 300;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#000";
+      for (let x = 40; x < 560; x += 6) {
+        if (x % 18 !== 0) ctx.fillRect(x, 40, (x % 4) + 2, 160);
+      }
+      ctx.font = "24px monospace";
+      ctx.fillText(`SAVE TEST ${new Date().toISOString().slice(0, 19)}`, 40, 250);
+      return new Promise((resolve, reject) =>
+        canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("toBlob 실패"))), "image/png"),
+      );
+    }
+
+    async function loadBlobImage() {
+      try {
+        const response = await fetch(sampleUrl, { headers: { "x-test-header": "1" } });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        await setBlobImage(await response.blob(), "fetch 로 받은 sample.png");
+      } catch (e) {
+        log(`sample.png 받기 실패(${e.message}). 페이지가 그린 PNG 를 씁니다.`);
+        await setBlobImage(await drawTestPng(), "페이지가 그린 PNG");
+      }
+    }
+
+    httpsUrlEl.value = sampleUrl;
+    httpsImgEl.src = sampleUrl;
+    httpsUrlEl.onchange = () => {
+      const url = httpsUrlEl.value.trim();
+      if (url) httpsImgEl.src = url;
+      else httpsImgEl.removeAttribute("src");
+    };
+
+    loadBlobImage().catch((e) => log(`blob 이미지 준비 오류: ${e.message}`));
+
+    document.getElementById("copyBtn").onclick = async () => {
+      let httpsOrigin = "-";
+      try {
+        const { origin } = new URL(httpsUrlEl.value.trim());
+        httpsOrigin = `${origin} (${origin === location.origin ? "페이지와 같은 origin" : "다른 origin"})`;
+      } catch {
+        // URL 이 비었거나 형식이 틀리면 "-" 로 남긴다.
+      }
+      const lines = [
+        `[이미지 저장 실험 · 단독 페이지] ${os} · ${browser}`,
+        `UA: ${ua}`,
+        `secure context: ${window.isSecureContext} · navigator.share: ${typeof navigator.share}`,
+        `https 이미지 origin: ${httpsOrigin}`,
+        `blob 이미지: ${blobImage.source} (${blobImage.blob ? blobImage.blob.type || "type 없음" : "-"})`,
+        ...TESTS.map((test) => `${test.id} ${test.label}: ${document.getElementById(`result${test.id}`).value || "-"}`),
+      ];
+      summaryEl.value = lines.join("\n");
+      summaryEl.style.display = "block";
+      try {
+        await navigator.clipboard.writeText(summaryEl.value);
+        log("결과를 클립보드에 복사함");
+      } catch (e) {
+        summaryEl.select();
+        log(`클립보드 복사 실패(${e.name}). 위 칸을 직접 복사해 주세요.`);
+      }
+    };
+  })();
+</script>
+</body>
+</html>
