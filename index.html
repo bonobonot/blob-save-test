@@ -42,6 +42,12 @@
 <div id="blobRows"></div>
 <img id="blobImg" alt="blob 이미지" />
 
+<h2>3. 다른 origin 의 다운로드 응답 (Content-Disposition: attachment)</h2>
+<p class="muted">서버가 <code>Content-Disposition: attachment</code> 를 붙여 내려주는 이미지 주소입니다. 주소 끝에 <code>?att=주소</code> 로 넘기면 자동으로 채웁니다.
+  이미지가 화면에 보이기만 하고 저장되지 않으면 X 입니다.</p>
+<input id="attachUrl" placeholder="https://xxxx.netlify.app/attachment/sample.png" />
+<div id="attachRows"></div>
+
 <h2>결과</h2>
 <button id="copyBtn">결과 복사</button>
 <textarea id="summary" readonly></textarea>
@@ -58,6 +64,9 @@
       { id: "C3", group: "blob", label: "아래 이미지를 길게 눌러 저장", manual: true },
       { id: "D", group: "blob", label: "공유 시트(navigator.share)에서 「이미지 저장」" },
       { id: "E", group: "blob", label: "data URL + <a download>" },
+      { id: "F1", group: "attach", label: "attachment 주소로 지금 창에서 이동" },
+      { id: "F2", group: "attach", label: "attachment 주소 + <a download>" },
+      { id: "F3", group: "attach", label: "attachment 주소를 새 창으로" },
     ];
     const ua = navigator.userAgent;
     const os = /iPhone|iPad|iPod/.test(ua) ? "iOS" : /Android/.test(ua) ? "Android" : "기타 OS";
@@ -67,6 +76,7 @@
     const logEl = document.getElementById("log");
     const httpsUrlEl = document.getElementById("httpsUrl");
     const httpsImgEl = document.getElementById("httpsImg");
+    const attachUrlEl = document.getElementById("attachUrl");
     const blobImgEl = document.getElementById("blobImg");
     const blobSourceEl = document.getElementById("blobSource");
     const summaryEl = document.getElementById("summary");
@@ -108,6 +118,12 @@
       return url;
     }
 
+    function requireAttachUrl() {
+      const url = attachUrlEl.value.trim();
+      if (!url.startsWith("https://")) throw new Error("attachment 이미지 URL 을 먼저 넣어 주세요.");
+      return url;
+    }
+
     function requireBlob() {
       if (!blobImage.blob) throw new Error("blob 이미지가 아직 없습니다.");
       return blobImage;
@@ -124,6 +140,9 @@
       C1: () => clickAnchor(requireBlob().url, fileNameOf(blobImage.blob.type), false),
       C2: () => clickAnchor(requireBlob().url, null, true),
       E: () => clickAnchor(requireBlob().dataUrl, fileNameOf(blobImage.blob.type), false),
+      F1: () => clickAnchor(requireAttachUrl(), null, false),
+      F2: () => clickAnchor(requireAttachUrl(), fileNameOf(), false),
+      F3: () => clickAnchor(requireAttachUrl(), null, true),
       D: async () => {
         const { blob } = requireBlob();
         if (!navigator.share) throw new Error("navigator.share 미지원");
@@ -156,7 +175,7 @@
         select.appendChild(option);
       }
       row.appendChild(select);
-      document.getElementById(test.group === "https" ? "httpsRows" : "blobRows").appendChild(row);
+      document.getElementById(`${test.group}Rows`).appendChild(row);
     }
 
     function readDataUrl(blob) {
@@ -206,6 +225,7 @@
       }
     }
 
+    attachUrlEl.value = new URLSearchParams(location.search).get("att") || "";
     httpsUrlEl.value = sampleUrl;
     httpsImgEl.src = sampleUrl;
     httpsUrlEl.onchange = () => {
@@ -217,18 +237,20 @@
     loadBlobImage().catch((e) => log(`blob 이미지 준비 오류: ${e.message}`));
 
     document.getElementById("copyBtn").onclick = async () => {
-      let httpsOrigin = "-";
-      try {
-        const { origin } = new URL(httpsUrlEl.value.trim());
-        httpsOrigin = `${origin} (${origin === location.origin ? "페이지와 같은 origin" : "다른 origin"})`;
-      } catch {
-        // URL 이 비었거나 형식이 틀리면 "-" 로 남긴다.
-      }
+      const describeOrigin = (url) => {
+        try {
+          const { origin } = new URL(url.trim());
+          return `${origin} (${origin === location.origin ? "페이지와 같은 origin" : "다른 origin"})`;
+        } catch {
+          return "-";
+        }
+      };
       const lines = [
         `[이미지 저장 실험 · 단독 페이지] ${os} · ${browser}`,
         `UA: ${ua}`,
         `secure context: ${window.isSecureContext} · navigator.share: ${typeof navigator.share}`,
-        `https 이미지 origin: ${httpsOrigin}`,
+        `https 이미지 origin: ${describeOrigin(httpsUrlEl.value)}`,
+        `attachment 이미지 origin: ${describeOrigin(attachUrlEl.value)}`,
         `blob 이미지: ${blobImage.source} (${blobImage.blob ? blobImage.blob.type || "type 없음" : "-"})`,
         ...TESTS.map((test) => `${test.id} ${test.label}: ${document.getElementById(`result${test.id}`).value || "-"}`),
       ];
